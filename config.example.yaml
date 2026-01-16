@@ -1,0 +1,58 @@
+# ============================================================================
+# Morrow 配置文件
+# ============================================================================
+# 配置文件位置:
+#   Linux:   ~/.config/morrow/config.yaml
+#   macOS:   ~/Library/Application Support/morrow/config.yaml
+#   Windows: %APPDATA%\morrow\config.yaml
+#
+# 运行 `morrow config init` 可交互式创建配置文件
+# 运行 `morrow config path` 可查看配置文件路径
+# ============================================================================
+
+# [必填] 时区设置
+# 用于计算"明天"的日期，使用 IANA 时区名称
+# 常见值: Asia/Shanghai, America/New_York, Europe/London, Asia/Tokyo
+timezone: Asia/Shanghai
+
+# [必填] Google Tasks 配置
+google:
+  # 读取待办事项的源列表名称
+  source_list: "Tomorrow Tasks"
+  # 写入生成日程的目标列表名称（不存在会自动创建）
+  output_list: "Morrow Schedule"
+
+# [必填] LLM 配置 (BYOK - Bring Your Own Key)
+# API Key 通过环境变量 MORROW_LLM_API_KEY 设置，不要写在配置文件中
+llm:
+  # API 格式: openai / anthropic / gemini
+  api_format: openai
+  # API 端点（可自定义为兼容 API）
+  base_url: "https://api.openai.com/v1"
+  # 模型名称
+  model: "gpt-4o"
+
+# [可选] 用户偏好设置
+# 所有字段都是可选的，使用自然语言描述即可
+# 你可以添加任何自定义字段，LLM 会理解并参考
+preferences:
+  # [可选] 用户自述：描述你的生活习惯、身体状况、工作性质等
+  # 这会帮助 LLM 生成更适合你的日程安排
+  # bio: |
+  #   我是一名程序员，久坐较多，需要定期起来活动。
+  #   有轻微颈椎问题，不宜长时间低头。
+  #   喜欢在上午处理复杂任务，下午精力较差。
+
+  # --- 以下是常用的时间偏好字段 ---
+  wake_up: "7:30左右，周末可能晚一点"
+  sleep: "尽量11点前睡觉"
+  breakfast: "起床后半小时"
+  lunch: "12点到1点之间"
+  dinner: "6点半到7点半"
+  shower: "一般回家后洗澡"
+
+  # --- 你可以添加任何自定义字段 ---
+  # commute: "通勤大概40分钟，早上8点出门"
+  # exercise: "希望每天能有30分钟运动"
+  # focus_time: "上午9-11点是我最专注的时间"
+  # nap: "午饭后小睡20分钟"

@@ -1,0 +1,29 @@
+name: Plan Tomorrow
+
+on:
+  workflow_dispatch:
+    inputs:
+      config_path:
+        description: 'Path to config file (relative to repo root)'
+        required: false
+        default: 'config.yaml'
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install morrow
+        run: |
+          curl -sSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Run planning
+        env:
+          MORROW_LLM_API_KEY: ${{ secrets.MORROW_LLM_API_KEY }}
+          MORROW_GOOGLE_CLIENT_ID: ${{ secrets.MORROW_GOOGLE_CLIENT_ID }}
+          MORROW_GOOGLE_CLIENT_SECRET: ${{ secrets.MORROW_GOOGLE_CLIENT_SECRET }}
+          MORROW_GOOGLE_REFRESH_TOKEN: ${{ secrets.MORROW_GOOGLE_REFRESH_TOKEN }}
+        run: |
+          morrow plan --config ${{ github.event.inputs.config_path }}
