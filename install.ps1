@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$Repo = "user/morrow"
+$Repo = "zjy-dev/morrow"
 $InstallDir = if ($env:MORROW_INSTALL_DIR) { $env:MORROW_INSTALL_DIR } else { "$env:LOCALAPPDATA\morrow\bin" }
 $ConfigDir = "$env:APPDATA\morrow"
 

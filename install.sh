@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-REPO="user/morrow"
+REPO="zjy-dev/morrow"
 INSTALL_DIR="${MORROW_INSTALL_DIR:-$HOME/.local/bin}"
 CONFIG_DIR=""
 
