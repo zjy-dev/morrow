@@ -85,6 +85,41 @@ impl Default for TimeHint {
 pub struct Preprocessor;
 
 impl Preprocessor {
+    /// Check if sleep time is past midnight (e.g., 02:00 means next day)
+    fn is_overnight(wake_time: NaiveTime, sleep_time: NaiveTime) -> bool {
+        sleep_time < wake_time
+    }
+    
+    /// Calculate minutes between two times, handling overnight case
+    fn minutes_between(start: NaiveTime, end: NaiveTime, overnight: bool) -> i64 {
+        let diff = (end - start).num_minutes();
+        if overnight && diff < 0 {
+            // Add 24 hours worth of minutes
+            diff + 24 * 60
+        } else if !overnight && diff < 0 {
+            0
+        } else {
+            diff
+        }
+    }
+    
+    /// Check if time a is before time b, considering overnight schedule
+    fn time_before(a: NaiveTime, b: NaiveTime, wake_time: NaiveTime, overnight: bool) -> bool {
+        if !overnight {
+            return a < b;
+        }
+        // For overnight: times after wake are "earlier" in the day than times before wake
+        let a_after_wake = a >= wake_time;
+        let b_after_wake = b >= wake_time;
+        
+        match (a_after_wake, b_after_wake) {
+            (true, true) => a < b,   // Both in evening, normal compare
+            (false, false) => a < b, // Both after midnight, normal compare
+            (true, false) => true,   // a is evening, b is after midnight, a is earlier
+            (false, true) => false,  // a is after midnight, b is evening, b is earlier
+        }
+    }
+
     /// Parse user preferences to extract day constraints
     pub fn extract_constraints(preferences: &UserPreferences) -> DayConstraints {
         let prefs = &preferences.prefs;
@@ -162,8 +197,17 @@ impl Preprocessor {
                 duration_minutes: 30,
             });
         } else {
-            // Default: 1.5 hours before sleep
-            let shower_start = sleep_time - Duration::minutes(90);
+            // Default: 1.5 hours before sleep (handle overnight)
+            let overnight = Self::is_overnight(wake_time, sleep_time);
+            let shower_start = if overnight && sleep_time < NaiveTime::from_hms_opt(1, 30, 0).unwrap() {
+                // Sleep is very early morning, shower should be late night
+                NaiveTime::from_hms_opt(23, 0, 0).unwrap()
+            } else {
+                // Normal case or late night sleep
+                let mins = sleep_time.signed_duration_since(NaiveTime::from_hms_opt(0, 0, 0).unwrap()).num_minutes();
+                let shower_mins = if mins >= 90 { mins - 90 } else { mins + 24 * 60 - 90 };
+                NaiveTime::from_hms_opt((shower_mins / 60) as u32 % 24, (shower_mins % 60) as u32, 0).unwrap()
+            };
             fixed_activities.push(FixedActivity {
                 name: "洗澡".to_string(),
                 start: shower_start,
@@ -171,28 +215,41 @@ impl Preprocessor {
             });
         }
         
-        // Sleep preparation
-        let sleep_prep_start = sleep_time - Duration::minutes(30);
+        // Sleep preparation (30 min before sleep, handle overnight)
+        let sleep_mins = sleep_time.signed_duration_since(NaiveTime::from_hms_opt(0, 0, 0).unwrap()).num_minutes();
+        let prep_mins = if sleep_mins >= 30 { sleep_mins - 30 } else { sleep_mins + 24 * 60 - 30 };
+        let sleep_prep_start = NaiveTime::from_hms_opt((prep_mins / 60) as u32 % 24, (prep_mins % 60) as u32, 0).unwrap();
         fixed_activities.push(FixedActivity {
             name: "睡前准备".to_string(),
             start: sleep_prep_start,
             duration_minutes: 30,
         });
         
-        // Sort by start time
-        fixed_activities.sort_by_key(|a| a.start);
+        // Sort by time considering overnight schedule
+        let overnight = Self::is_overnight(wake_time, sleep_time);
+        fixed_activities.sort_by(|a, b| {
+            let a_order = Self::time_order(a.start, wake_time, overnight);
+            let b_order = Self::time_order(b.start, wake_time, overnight);
+            a_order.cmp(&b_order)
+        });
+        
+        // Filter out activities outside wake-sleep range
+        fixed_activities.retain(|activity| {
+            Self::time_in_range(activity.start, wake_time, sleep_time, overnight)
+        });
         
         // Calculate available slots
         let available_slots = Self::calculate_available_slots(
             wake_time,
             sleep_time,
             &fixed_activities,
+            overnight,
         );
         
         let total_available_minutes: u32 = available_slots
             .iter()
             .filter(|s| s.slot_type == SlotType::Available)
-            .map(|s| Self::slot_duration_minutes(s))
+            .map(|s| Self::slot_duration_minutes(s, overnight))
             .sum();
         
         DayConstraints {
@@ -238,39 +295,76 @@ impl Preprocessor {
         None
     }
     
+    /// Get sort order for time considering overnight schedule
+    fn time_order(time: NaiveTime, wake_time: NaiveTime, overnight: bool) -> u32 {
+        if !overnight {
+            return time.signed_duration_since(NaiveTime::from_hms_opt(0, 0, 0).unwrap()).num_minutes() as u32;
+        }
+        // For overnight: times >= wake_time come first, then times < wake_time
+        let mins = time.signed_duration_since(NaiveTime::from_hms_opt(0, 0, 0).unwrap()).num_minutes() as u32;
+        let wake_mins = wake_time.signed_duration_since(NaiveTime::from_hms_opt(0, 0, 0).unwrap()).num_minutes() as u32;
+        if mins >= wake_mins {
+            mins - wake_mins
+        } else {
+            mins + (24 * 60 - wake_mins)
+        }
+    }
+    
+    /// Check if time is within wake-sleep range
+    fn time_in_range(time: NaiveTime, wake_time: NaiveTime, sleep_time: NaiveTime, overnight: bool) -> bool {
+        if !overnight {
+            return time >= wake_time && time < sleep_time;
+        }
+        // For overnight: valid if >= wake OR < sleep
+        time >= wake_time || time < sleep_time
+    }
+    
     /// Calculate available time slots between fixed activities
     fn calculate_available_slots(
         wake_time: NaiveTime,
         sleep_time: NaiveTime,
         fixed_activities: &[FixedActivity],
+        overnight: bool,
     ) -> Vec<TimeSlot> {
         let mut slots = Vec::new();
         let mut current_time = wake_time;
         
         for activity in fixed_activities {
             // Available slot before this activity
-            if current_time < activity.start {
-                let gap_minutes = (activity.start - current_time).num_minutes();
-                if gap_minutes > 10 {
-                    // Add buffer before fixed activity
-                    let buffer_start = activity.start - Duration::minutes(5);
-                    if current_time < buffer_start {
-                        slots.push(TimeSlot {
-                            start: current_time,
-                            end: buffer_start,
-                            slot_type: SlotType::Available,
-                        });
-                    }
+            let gap_minutes = Self::minutes_between(current_time, activity.start, overnight);
+            if gap_minutes > 10 {
+                // Add buffer before fixed activity
+                let buffer_mins = activity.start.signed_duration_since(NaiveTime::from_hms_opt(0, 0, 0).unwrap()).num_minutes();
+                let buffer_start_mins = if buffer_mins >= 5 { buffer_mins - 5 } else { buffer_mins + 24 * 60 - 5 };
+                let buffer_start = NaiveTime::from_hms_opt(
+                    (buffer_start_mins / 60) as u32 % 24,
+                    (buffer_start_mins % 60) as u32,
+                    0
+                ).unwrap();
+                
+                if Self::minutes_between(current_time, buffer_start, overnight) > 0 {
                     slots.push(TimeSlot {
-                        start: buffer_start,
-                        end: activity.start,
-                        slot_type: SlotType::Buffer,
+                        start: current_time,
+                        end: buffer_start,
+                        slot_type: SlotType::Available,
                     });
                 }
+                slots.push(TimeSlot {
+                    start: buffer_start,
+                    end: activity.start,
+                    slot_type: SlotType::Buffer,
+                });
             }
             
             // Fixed activity slot
-            let activity_end = activity.start + Duration::minutes(activity.duration_minutes as i64);
+            let end_mins = activity.start.signed_duration_since(NaiveTime::from_hms_opt(0, 0, 0).unwrap()).num_minutes()
+                + activity.duration_minutes as i64;
+            let activity_end = NaiveTime::from_hms_opt(
+                (end_mins / 60) as u32 % 24,
+                (end_mins % 60) as u32,
+                0
+            ).unwrap();
+            
             slots.push(TimeSlot {
                 start: activity.start,
                 end: activity_end,
@@ -281,7 +375,8 @@ impl Preprocessor {
         }
         
         // Remaining time until sleep
-        if current_time < sleep_time {
+        let remaining = Self::minutes_between(current_time, sleep_time, overnight);
+        if remaining > 0 {
             slots.push(TimeSlot {
                 start: current_time,
                 end: sleep_time,
@@ -292,8 +387,9 @@ impl Preprocessor {
         slots
     }
     
-    fn slot_duration_minutes(slot: &TimeSlot) -> u32 {
-        (slot.end - slot.start).num_minutes() as u32
+    fn slot_duration_minutes(slot: &TimeSlot, overnight: bool) -> u32 {
+        let diff = Self::minutes_between(slot.start, slot.end, overnight);
+        diff.max(0) as u32
     }
     
     /// Preprocess tasks and extract time hints
