@@ -8,7 +8,7 @@ use config::AppConfig;
 use dialoguer::{Confirm, Input};
 use error::{MorrowError, Result};
 use google::{GoogleAuth, GoogleTasksClient, TaskInput};
-use planner::{build_planning_input, build_system_prompt, build_user_prompt, Scheduler};
+use planner::Pipeline;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -118,23 +118,35 @@ async fn cmd_plan(config_path: Option<PathBuf>) -> Result<()> {
         return Err(MorrowError::OutputListNotEmpty);
     }
     
-    // Generate schedule using LLM
-    println!("Generating schedule with LLM...");
-    let scheduler = Scheduler::new(config.llm.clone())?;
+    // Execute the planning pipeline
+    println!("\nExecuting planning pipeline...\n");
+    let pipeline = Pipeline::new(config.clone());
+    let result = pipeline.execute(&tasks).await?;
     
-    let input = build_planning_input(&config.preferences, &tasks, &config.timezone)?;
-    let system_prompt = build_system_prompt();
-    let user_prompt = build_user_prompt(&input);
+    // Print stats
+    println!("\n--- Pipeline Stats ---");
+    println!("  Tasks: {}/{} scheduled", result.stats.scheduled_tasks, result.stats.total_tasks);
+    println!("  Time: {} of {} minutes used", 
+        result.stats.total_scheduled_minutes, 
+        result.stats.available_minutes
+    );
+    println!("  Pomodoro sessions: {}", result.stats.pomodoro_sessions);
     
-    let schedule = scheduler.generate_schedule(&system_prompt, &user_prompt).await?;
+    if !result.validation.is_valid {
+        println!("\nWarning: Schedule has validation issues.");
+    }
     
     // Write schedule to output list
-    println!("Writing schedule to '{}'...", config.google.output_list);
-    let tomorrow = input.date.clone();
+    println!("\nWriting schedule to '{}'...", config.google.output_list);
+    let tomorrow = pipeline.get_tomorrow_date()?;
     
-    for item in schedule.iter().rev() {
+    for item in result.schedule.iter().rev() {
+        let mut title = format!("🕒 [{}] {}", item.time, item.title);
+        if let Some(suggestion) = &item.suggestion {
+            title = format!("{} | {}", title, suggestion);
+        }
         let task = TaskInput {
-            title: format!("🕒 [{}] {}", item.time, item.title),
+            title,
             notes: Some(format!("Duration: {} minutes", item.duration)),
             due: Some(format!("{}T00:00:00.000Z", tomorrow)),
         };
@@ -143,8 +155,9 @@ async fn cmd_plan(config_path: Option<PathBuf>) -> Result<()> {
     
     println!("\nSchedule created successfully!");
     println!("\n--- Tomorrow's Schedule ({}) ---\n", tomorrow);
-    for item in &schedule {
-        println!("  {} - {} ({} min)", item.time, item.title, item.duration);
+    for item in &result.schedule {
+        let suggestion = item.suggestion.as_ref().map(|s| format!(" | {}", s)).unwrap_or_default();
+        println!("  {} - {} ({} min){}", item.time, item.title, item.duration, suggestion);
     }
     
     Ok(())

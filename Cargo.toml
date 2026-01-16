@@ -1,6 +1,6 @@
 [package]
 name = "morrow"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "LLM-powered daily schedule planner with Google Tasks integration"
 license = "MIT"
@@ -22,3 +22,4 @@ chrono-tz = "0.10"
 indexmap = { version = "2", features = ["serde"] }
 url = "2"
 dialoguer = "0.11"
+regex = "1"
